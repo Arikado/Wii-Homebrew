@@ -1,0 +1,10 @@
+######################################################################
+This game is a homage to Nintendo's classic SNES Mario games and the pleasure we had with it. 
+######################################################################
+
+The sourcecode is : GPL
+Most images : LGPL
+also some images are : Creative Commons, GPL
+Most of the Music is : LGPL
+also some Music is : Creative Commons, GPL
+Sounds have different licenses : Creative Commons, GPL, LGPL

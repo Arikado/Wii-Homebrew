@@ -1,0 +1,66 @@
+body
+{
+	background-color: #352128;
+	color: #5192FF;
+}
+
+h1
+{
+	text-align: center;
+	color: #9888FD;
+	margin-bottom: 0px;
+}
+
+h2
+{
+	color: #0369F0;
+	margin-top: 0px;
+	margin-bottom: 0px;
+}
+
+h3
+{
+	color: #4ABAAA;
+	margin-top: 2px;
+}
+
+th
+{
+	font-size: 25px;
+	color: #8F27EF;
+}
+
+dt
+{
+	font-weight: bold;
+	color: #14A140;
+}
+
+a
+{
+	color: #69E674;
+}
+
+a:visited
+{
+	color: #59B658;
+}
+
+td.version
+{
+	font-family: sans-serif;
+	font-weight: bold;
+	background-color: #224680;
+	color: #55FA80;
+}
+
+td.fixes
+{
+	font-size: 14px;
+	font-spacing : 3px;
+	background-color: #294900;
+	color: #FFEE5D;
+	padding: 15px 10px 35px;
+	border: medium dotted blue;
+
+}
