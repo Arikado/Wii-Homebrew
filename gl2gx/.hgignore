@@ -1,0 +1,8 @@
+syntax: glob
+*.ii
+*.s
+*.i
+*.orig
+*.a
+*.o
+*.d
