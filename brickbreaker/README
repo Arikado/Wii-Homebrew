@@ -1,9 +1,9 @@
-Arikado's Wii Homebrew git : Wii Shooting Gallery
--------------------------------------------------
+Arikado's Wii Homebrew git : WiiBreaker
+---------------------------------------------------------------
 
 About:
 
-Wii Shooting Gallery is a game I wrote using libwiisprite a long time ago. It's a fun, completely customizeable, point and click shooter with a ton of features.
+A brickbreaker game I wrote in libwiisprite. I wanted to do more with it but ultimately abandoned it work on other more interesting things.
 
 License:
 
