@@ -1,0 +1,41 @@
+                                  How the Balance Board Works in WiiBreaker
+		
+		                                   by
+									
+				                 Arikado
+				
+		The Balance Board is composed of 4 pressure sensors. One in the top left,
+		one in the top right, one in the bottom left, and one in the bottom right.
+		Represented by the variables (respectively) tl, tr, bl, br. However, we don't
+		need to worry about these sensors to move the paddle. No, the Balance Board
+		struct creates an X and Y coordinate based on the amount of pressure on each
+		side of the board.
+		
+		Positive X = More pressure is on the right of the Balance Board
+		Negative X = More pressure is on the left of the Balance Board
+		Positive Y = More Pressure is on the bottom of the Balance Board
+		Negative Y = More pressure is on the top of the Balance Board
+		
+		If X or Y equal zero that means that there is an equal amount of pressure on either the
+		horizontal or vertical sides of the board respectively.
+		
+		Think of all this as a grid. And that there is a point in the center until the board is stepped upon:
+		
+	        |                                                                         
+		|
+		|
+	      -1|
+	        |
+	       0|                                     *Center Point
+	        |
+	       1|
+		|
+		|
+	        |_________________________________-1___0___1________________________________
+		
+		And now, think of how this point would move as you put pressure on different parts of the board.
+		So as you but pressure on the top of the board, the Y value decreases and is output negatively.
+		
+		When I move my paddle in WiiBreaker, I move it according to the X value. The higher or lower
+		the value, the faster or slower the speed of the paddle in the pressured direction.
+		
