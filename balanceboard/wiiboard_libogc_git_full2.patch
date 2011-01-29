@@ -1,0 +1,526 @@
+diff --git a/Makefile b/Makefile
+index 0918d54..a7c1ec6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -165,7 +165,7 @@ DIOBJ		:=	di.o di_read.o stubasm.o stubload.o
+ BTEOBJ		:=	bte.o hci.o l2cap.o btmemb.o btmemr.o btpbuf.o physbusif.o
+ 
+ #---------------------------------------------------------------------------------
+-WIIUSEOBJ	:=	classic.o dynamics.o events.o guitar_hero_3.o io.o io_wii.o ir.o \
++WIIUSEOBJ	:=	classic.o dynamics.o events.o guitar_hero_3.o wiiboard.o io.o io_wii.o ir.o \
+ 				nunchuk.o wiiuse.o wpad.o
+ 
+ #---------------------------------------------------------------------------------
+diff --git a/gc/wiiuse/wiiuse.h b/gc/wiiuse/wiiuse.h
+index c828e37..32734ca 100644
+--- a/gc/wiiuse/wiiuse.h
++++ b/gc/wiiuse/wiiuse.h
+@@ -95,6 +95,7 @@
+ #define EXP_NUNCHUK						1
+ #define EXP_CLASSIC						2
+ #define EXP_GUITAR_HERO_3				3
++#define EXP_WII_BOARD					4
+ 
+ /* IR correction types */
+ typedef enum ir_position_t {
+@@ -479,6 +480,29 @@ typedef struct guitar_hero_3_t {
+ 	struct joystick_t js;			/**< joystick calibration					*/
+ } guitar_hero_3_t;
+ 
++/*
++	Wii board
++*/
++typedef struct wii_board_t {
++	short tl;  /* Interpolated */
++	short tr;
++	short bl;
++	short br;  /* End interp */
++	short rtl; /* RAW */
++	short rtr;
++	short rbl;
++	short rbr; /* /RAW */
++	short ltl;
++	short ltr;
++	short lbl;
++	short lbr;
++	short ctl[3]; /* Calibration */
++	short ctr[3];
++	short cbl[3];
++	short cbr[3]; /* /Calibration */
++	short x;
++	short y;
++} wii_board_t;
+ 
+ /**
+  *	@struct expansion_t
+@@ -491,6 +515,7 @@ typedef struct expansion_t {
+ 		struct nunchuk_t nunchuk;
+ 		struct classic_ctrl_t classic;
+ 		struct guitar_hero_3_t gh3;
++		struct wii_board_t wb;
+ 	};
+ } expansion_t;
+ 
+@@ -537,7 +562,9 @@ typedef enum WIIUSE_EVENT_TYPE {
+ 	WIIUSE_CLASSIC_CTRL_INSERTED,
+ 	WIIUSE_CLASSIC_CTRL_REMOVED,
+ 	WIIUSE_GUITAR_HERO_3_CTRL_INSERTED,
+-	WIIUSE_GUITAR_HERO_3_CTRL_REMOVED
++	WIIUSE_GUITAR_HERO_3_CTRL_REMOVED,
++	WIIUSE_WII_BOARD_CTRL_INSERTED,
++	WIIUSE_WII_BOARD_CTRL_REMOVED
+ } WIIUSE_EVENT_TYPE;
+ 
+ /**
+@@ -674,6 +701,9 @@ WIIUSE_EXPORT extern void wiiuse_set_ir_position(struct wiimote_t* wm, enum ir_p
+ WIIUSE_EXPORT extern void wiiuse_set_aspect_ratio(struct wiimote_t* wm, enum aspect_t aspect);
+ WIIUSE_EXPORT extern void wiiuse_set_ir_sensitivity(struct wiimote_t* wm, int level);
+ 
++/* Balance Board */
++WIIUSE_EXPORT extern void wiiuse_set_wii_board_calib(struct wiimote_t *wm);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/gc/wiiuse/wpad.h b/gc/wiiuse/wpad.h
+index d270d04..0b9d10f 100644
+--- a/gc/wiiuse/wpad.h
++++ b/gc/wiiuse/wpad.h
+@@ -12,6 +12,7 @@ enum {
+ 	WPAD_CHAN_1,
+ 	WPAD_CHAN_2,
+ 	WPAD_CHAN_3,
++	WPAD_BALANCE_BOARD,
+ 	WPAD_MAX_WIIMOTES,
+ };
+ 											
+@@ -61,6 +62,7 @@ enum {
+ 	WPAD_EXP_NUNCHUK,
+ 	WPAD_EXP_CLASSIC,
+ 	WPAD_EXP_GUITARHERO3,
++	WPAD_EXP_WIIBOARD,
+ 	WPAD_EXP_UNKNOWN = 255
+ };
+ 
+diff --git a/libogc/conf.c b/libogc/conf.c
+index ac1a35d..e9f69b5 100644
+--- a/libogc/conf.c
++++ b/libogc/conf.c
+@@ -340,21 +340,33 @@ s32 CONF_GetPadDevices(conf_pad_device *devs, int count)
+ {
+ 	int res;
+ 	u8 buf[0x461];
+-	
++
+ 	res = CONF_Get("BT.DINF", buf, 0x461);
+ 	if(res < 0) return res;
+-	if((res < 1) || (buf[0] > 0x10)) return CONF_EBADVALUE;
++	if(res < 1) return CONF_EBADVALUE;
+ 
+-	if(count && devs) {
++	int found = 0;
++	if(count>0 && devs)
++	{
+ 		memset(devs,0,count*sizeof(conf_pad_device));
+-		if(count < buf[0])
+-			memcpy(devs,&buf[1],count*sizeof(conf_pad_device));
+-		else
+-			memcpy(devs,&buf[1],buf[0]*sizeof(conf_pad_device));
++
++		int i;
++		for(i=0; i<15; i++)
++		{
++			int pointer = 1 + i * sizeof(conf_pad_device);
++			if(buf[pointer+6] != 0)
++			{
++				memcpy(&devs[found],&buf[pointer],sizeof(conf_pad_device));
++				found++;
++				if(found==count)
++				{
++					break;
++				}
++			}
++		}
+ 	}
+ 
+-	res = buf[0];
+-	return res;
++	return found;
+ }
+ 
+ s32 CONF_GetNickName(u8 *nickname)
+diff --git a/wiiuse/events.c b/wiiuse/events.c
+index c3fb858..e4004e5 100644
+--- a/wiiuse/events.c
++++ b/wiiuse/events.c
+@@ -20,6 +20,7 @@
+ #include "nunchuk.h"
+ #include "classic.h"
+ #include "guitar_hero_3.h"
++#include "wiiboard.h"
+ #include "ir.h"
+ #include "io.h"
+ 
+@@ -163,6 +164,9 @@ static void handle_expansion(struct wiimote_t *wm,ubyte *msg)
+ 		case EXP_GUITAR_HERO_3:
+ 			guitar_hero_3_event(&wm->exp.gh3, msg);
+ 			break;
++		case EXP_WII_BOARD:
++			wii_board_event(&wm->exp.wb, msg);
++			break;
+ 		default:
+ 			break;
+ 	}
+diff --git a/wiiuse/io.c b/wiiuse/io.c
+index 79e4dcd..9636622 100644
+--- a/wiiuse/io.c
++++ b/wiiuse/io.c
+@@ -6,6 +6,7 @@
+ #include "nunchuk.h"
+ #include "classic.h"
+ #include "guitar_hero_3.h"
++#include "wiiboard.h"
+ #include "io.h"
+ #include "lwp_wkspace.h"
+ 
+@@ -94,6 +95,9 @@ void wiiuse_handshake_expansion(struct wiimote_t *wm,ubyte *data,uword len)
+ 				case EXP_ID_CODE_GUITAR:
+ 					if(!guitar_hero_3_handshake(wm,&wm->exp.gh3,data,len)) return;
+ 					break;
++				case EXP_ID_CODE_WII_BOARD:
++					if(!wii_board_handshake(wm,&wm->exp.wb,data,len)) return;
++					break;
+ 				default:
+ 					WIIMOTE_DISABLE_STATE(wm,WIIMOTE_STATE_EXP_HANDSHAKE);
+ 					WIIMOTE_ENABLE_STATE(wm,WIIMOTE_STATE_EXP_FAILED);
+@@ -129,6 +133,10 @@ void wiiuse_disable_expansion(struct wiimote_t *wm)
+ 			guitar_hero_3_disconnected(&wm->exp.gh3);
+ 			wm->event = WIIUSE_GUITAR_HERO_3_CTRL_REMOVED;
+ 			break;
++		case EXP_WII_BOARD:
++			wii_board_disconnected(&wm->exp.wb);
++			wm->event = WIIUSE_WII_BOARD_CTRL_REMOVED;
++			break;
+ 		default:
+ 			break;
+ 	}
+diff --git a/wiiuse/wiiboard.c b/wiiuse/wiiboard.c
+new file mode 100644
+index 0000000..bea75bd
+--- /dev/null
++++ b/wiiuse/wiiboard.c
+@@ -0,0 +1,189 @@
++/*
++ *	wiiuse
++ *
++ *	Written By:
++ *		Michael Laforest	< para >
++ *		Email: < thepara (--AT--) g m a i l [--DOT--] com >
++ *
++ *	Copyright 2006-2007
++ *
++ *	This file is part of wiiuse.
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 3 of the License, or
++ *	(at your option) any later version.
++ *
++ *	This program is distributed in the hope that it will be useful,
++ *	but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *	GNU General Public License for more details.
++ *
++ *	You should have received a copy of the GNU General Public License
++ *	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ *	$Header: /cvsroot/devkitpro/libogc/wiiuse/wiiboard.c,v 1.6 2008/05/26 19:24:53 shagkur Exp $
++ *
++ */
++
++/**
++ *	@file
++ *	@brief Wiiboard expansion device.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <math.h>
++#include <string.h>
++
++#ifdef WIN32
++	#include <Winsock2.h>
++#endif
++
++#include "definitions.h"
++#include "wiiuse_internal.h"
++#include "dynamics.h"
++#include "events.h"
++#include "wiiboard.h"
++#include "io.h"
++
++/**
++ *	@brief Handle the handshake data from the wiiboard.
++ *
++ *	@param cc		A pointer to a classic_ctrl_t structure.
++ *	@param data		The data read in from the device.
++ *	@param len		The length of the data block, in bytes.
++ *
++ *	@return	Returns 1 if handshake was successful, 0 if not.
++ */
++int wii_board_handshake(struct wiimote_t* wm, struct wii_board_t* wb, ubyte* data, uword len) {
++	int i;
++	int offset = 0;
++
++	if (data[offset] == 0xFF) {
++		/*
++		 *	Sometimes the data returned here is not correct.
++		 *	This might happen because the wiimote is lagging
++		 *	behind our initialization sequence.
++		 *	To fix this just request the handshake again.
++		 *
++		 *	Other times it's just the first 16 bytes are 0xFF,
++		 *	but since the next 16 bytes are the same, just use
++		 *	those.
++		 */
++		if (data[offset + 16] == 0xFF) {
++			/* get the calibration data */
++			//printf("Wii board handshake appears invalid, trying again.\n");
++			wiiuse_read_data(wm, data, WM_EXP_MEM_CALIBR, EXP_HANDSHAKE_LEN, wiiuse_handshake_expansion);
++			return 0;
++		} else
++			offset += 16;
++	}
++
++	short *handshake_short = (short*)data;
++	
++	wb->ctr[0] = BIG_ENDIAN_SHORT(handshake_short[2]);
++	wb->cbr[0] = BIG_ENDIAN_SHORT(handshake_short[3]);
++	wb->ctl[0] = BIG_ENDIAN_SHORT(handshake_short[4]);
++	wb->cbl[0] = BIG_ENDIAN_SHORT(handshake_short[5]);
++
++	wb->ctr[1] = BIG_ENDIAN_SHORT(handshake_short[6]);
++	wb->cbr[1] = BIG_ENDIAN_SHORT(handshake_short[7]);
++	wb->ctl[1] = BIG_ENDIAN_SHORT(handshake_short[8]);
++	wb->cbl[1] = BIG_ENDIAN_SHORT(handshake_short[9]);
++
++	wb->ctr[2] = BIG_ENDIAN_SHORT(handshake_short[10]);
++	wb->cbr[2] = BIG_ENDIAN_SHORT(handshake_short[11]);
++	wb->ctl[2] = BIG_ENDIAN_SHORT(handshake_short[12]);
++	wb->cbl[2] = BIG_ENDIAN_SHORT(handshake_short[13]);
++
++	/* handshake done */
++	wm->exp.type = EXP_WII_BOARD;
++
++	#ifdef WIN32
++	wm->timeout = WIIMOTE_DEFAULT_TIMEOUT;
++	#endif
++
++	return 1; 
++}
++
++
++/**
++ *	@brief The wii board disconnected.
++ *
++ *	@param cc		A pointer to a classic_ctrl_t structure.
++ */
++void wii_board_disconnected(struct wii_board_t* wb) {
++	memset(wb, 0, sizeof(struct wii_board_t));
++}
++
++
++/**
++ *	@brief Handle wii board event.
++ *
++ *	@param cc		A pointer to a classic_ctrl_t structure.
++ *	@param msg		The message specified in the event packet.
++ */
++void wii_board_event(struct wii_board_t* wb, ubyte* msg) { 
++	int i;
++
++	short *shmsg = (short*)(msg);
++	wb->rtr = BIG_ENDIAN_SHORT(shmsg[0]);
++	//if(wb->rtr<0) wb->rtr = 0;
++	wb->rbr = BIG_ENDIAN_SHORT(shmsg[1]);
++	//if(wb->rbr<0) wb->rbr = 0;
++	wb->rtl = BIG_ENDIAN_SHORT(shmsg[2]);
++	//if(wb->rtl<0) wb->rtl = 0;
++	wb->rbl = BIG_ENDIAN_SHORT(shmsg[3]);		
++	//if(wb->rbl<0) wb->rbl = 0;
++
++	/* 
++		Interpolate values 
++		Calculations borrowed from wiili.org - No names to mention sadly :( http://www.wiili.org/index.php/Wii_Balance_Board_PC_Drivers page however!
++	*/
++
++	if(wb->rtr<wb->ctr[1])
++	{
++		wb->tr = 17*(wb->rtr-wb->ctr[0])/(wb->ctr[1]-wb->ctr[0]);
++	}
++	else if(wb->rtr >= wb->ctr[1])
++	{
++		wb->tr = 17*(wb->rtr-wb->ctr[1])/(wb->ctr[2]-wb->ctr[1]) + 17;
++	}
++
++	if(wb->rtl<wb->ctl[1])
++	{
++		wb->tl = 17*(wb->rtl-wb->ctl[0])/(wb->ctl[1]-wb->ctl[0]);
++	}
++	else if(wb->rtl >= wb->ctl[1])
++	{
++		wb->tl = 17*(wb->rtl-wb->ctl[1])/(wb->ctl[2]-wb->ctl[1]) + 17;
++	}
++
++	if(wb->rbr<wb->cbr[1])
++	{
++		wb->br = 17*(wb->rbr-wb->cbr[0])/(wb->cbr[1]-wb->cbr[0]);
++	}
++	else if(wb->rbr >= wb->cbr[1])
++	{
++		wb->br = 17*(wb->rbr-wb->cbr[1])/(wb->cbr[2]-wb->cbr[1]) + 17;
++	}
++
++	if(wb->rbl<wb->cbl[1])
++	{
++		wb->bl = 17*(wb->rbl-wb->cbl[0])/(wb->cbl[1]-wb->cbl[0]);
++	}
++	else if(wb->rbl >= wb->cbl[1])
++	{
++		wb->bl = 17*(wb->rbl-wb->cbl[1])/(wb->cbl[2]-wb->cbl[1]) + 17;
++	}	 
++	
++	wb->x = (wb->tr+wb->br)/2 - (wb->tl+wb->bl)/2;
++	wb->y = (wb->bl+wb->br)/2 - (wb->tl+wb->tr)/2;
++	
++}
++
++
++void wiiuse_set_wii_board_calib(struct wiimote_t *wm)
++{
++} 
+diff --git a/wiiuse/wiiboard.h b/wiiuse/wiiboard.h
+new file mode 100644
+index 0000000..807a34c
+--- /dev/null
++++ b/wiiuse/wiiboard.h
+@@ -0,0 +1,53 @@
++/*
++ *	wiiuse
++ *
++ *	Written By:
++ *		Michael Laforest	< para >
++ *		Email: < thepara (--AT--) g m a i l [--DOT--] com >
++ *
++ *	Copyright 2006-2007
++ *
++ *	This file is part of wiiuse.
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 3 of the License, or
++ *	(at your option) any later version.
++ *
++ *	This program is distributed in the hope that it will be useful,
++ *	but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *	GNU General Public License for more details.
++ *
++ *	You should have received a copy of the GNU General Public License
++ *	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ *	$Header: /cvsroot/devkitpro/libogc/wiiuse/wiiboard.h,v 1.1 2008/05/08 09:42:14 shagkur Exp $
++ *
++ */
++
++/**
++ *	@file
++ *	@brief Wii board expansion device.
++ */
++
++#ifndef WII_BOARD_H_INCLUDED
++#define WII_BOARD_H_INCLUDED
++
++#include "wiiuse_internal.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++int wii_board_handshake(struct wiimote_t* wm, struct wii_board_t* wb, ubyte* data, uword len);
++
++void wii_board_disconnected(struct wii_board_t* wb);
++
++void wii_board_event(struct wii_board_t* wb, ubyte* msg);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/wiiuse/wiiuse_internal.h b/wiiuse/wiiuse_internal.h
+index b3260a1..38734ed 100644
+--- a/wiiuse/wiiuse_internal.h
++++ b/wiiuse/wiiuse_internal.h
+@@ -158,7 +158,7 @@
+ #define EXP_ID_CODE_NUNCHUK					0xa4200000
+ #define EXP_ID_CODE_CLASSIC_CONTROLLER		0xa4200101
+ #define EXP_ID_CODE_GUITAR					0xa4200103
+-
++#define EXP_ID_CODE_WII_BOARD				0xa4200402
+ #define EXP_HANDSHAKE_LEN					224
+ 
+ /********************
+diff --git a/wiiuse/wpad.c b/wiiuse/wpad.c
+index 1bf7f5d..dcc3306 100644
+--- a/wiiuse/wpad.c
++++ b/wiiuse/wpad.c
+@@ -11,6 +11,7 @@
+ #include "ir.h"
+ #include "dynamics.h"
+ #include "guitar_hero_3.h"
++#include "wiiboard.h"
+ #include "wiiuse_internal.h"
+ #include "wiiuse/wpad.h"
+ #include "lwp_threads.h"
+@@ -255,6 +256,12 @@ static void __wpad_calc_data(WPADData *data,WPADData *lstate,struct accel_t *acc
+ 			}
+ 			break;
+ 
++			case EXP_WII_BOARD:
++			{
++				struct wii_board_t *wb = &data->exp.wb;
++			}
++			break;
++
+ 			default:
+ 				break;
+ 		}
+@@ -283,6 +290,9 @@ static void __save_state(struct wiimote_t* wm) {
+ 		case EXP_GUITAR_HERO_3:
+ 			wm->lstate.exp.gh3 = wm->exp.gh3;
+ 			break;
++		case EXP_WII_BOARD:
++			wm->lstate.exp.wb = wm->exp.wb;
++			break;
+ 	}
+ }
+ 
+@@ -326,6 +336,9 @@ static u32 __wpad_read_expansion(struct wiimote_t *wm,WPADData *data, struct _wp
+ 			STATE_CHECK(thresh->js, wm->exp.gh3.js.pos.x, wm->lstate.exp.gh3.js.pos.x);
+ 			STATE_CHECK(thresh->js, wm->exp.gh3.js.pos.y, wm->lstate.exp.gh3.js.pos.y);
+ 			break;
++		case EXP_WII_BOARD:
++			data->exp.wb = wm->exp.wb;
++			break;
+ 	}
+ 	return state_changed;
+ }
+@@ -808,6 +821,7 @@ s32 WPAD_Probe(s32 chan,u32 *type)
+ 					case WPAD_EXP_NUNCHUK:
+ 					case WPAD_EXP_CLASSIC:
+ 					case WPAD_EXP_GUITARHERO3:
++					case WPAD_EXP_WIIBOARD:
+ 						dev = wm->exp.type;
+ 						break;
+ 				}
