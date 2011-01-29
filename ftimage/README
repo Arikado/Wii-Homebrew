@@ -1,0 +1,21 @@
+Arikado's Wii Homebrew git: ftimage
+-----------------------------------
+
+About:
+
+ftimage, a font library which lets you easily render text with GX. Supports libraries like libwiisprite.
+
+License:
+
+There is no license.
+
+Miscellaneous:
+
+You will need freetype and freetypeGX to compile.
+
+Please feel free to contact me at castlevania7689 <at> yahoo <dot> com if you do anything cool with anything in this git. Thanks.
+
+IRC: #arikadosblog on EFNET
+
+
+HACKERCHANNEL
